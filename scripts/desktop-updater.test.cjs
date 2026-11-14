@@ -1,7 +1,13 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
-const { startUpdater } = require('../electron/updater.cjs');
+const { startUpdater, releaseNotesText } = require('../electron/updater.cjs');
+
+test('release feed notes are bounded plain text and never executable HTML', () => {
+  assert.deepEqual(releaseNotesText([{ version: '1.1.5', note: '<p>Updated launchers</p>' }]), ['Updated launchers']);
+  assert.deepEqual(releaseNotesText(null), []);
+  assert.equal(releaseNotesText('x'.repeat(3000))[0].length, 2000);
+});
 
 test('unpackaged apps never start updating', () => {
   const updater = new EventEmitter();
