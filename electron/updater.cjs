@@ -14,7 +14,7 @@ function startUpdater({ app, updater, hasFeed, notify, setIntervalFn = setInterv
   updater.allowDowngrade = false;
   state.status = "checking";
   on("checking-for-update", () => emit({ status: "checking", percent: null }));
-  on("update-available", (info) => emit({ status: "downloading", version: info.version, percent: 0 }));
+  on("update-available", (info) => emit({ status: "downloading", version: info.version, percent: 0, releaseNotes: releaseNotesText(info.releaseNotes) }));
   on("download-progress", (progress) => emit({ status: "downloading", percent: Math.round(progress.percent) }));
   on("update-not-available", () => emit({ status: "current", version: app.getVersion(), percent: null }));
   on("update-downloaded", (info) => emit({ status: "ready", version: info.version, percent: 100 }));
@@ -33,4 +33,8 @@ function startUpdater({ app, updater, hasFeed, notify, setIntervalFn = setInterv
   const timer = setIntervalFn(() => { void check(); }, 4 * 60 * 60 * 1000);
   return { getState: () => state, dispose: () => { clearIntervalFn(timer); listeners.forEach(([name, handler]) => updater.removeListener(name, handler)); } };
 }
-module.exports = { startUpdater };
+function releaseNotesText(value) {
+  const items = typeof value === "string" ? [value] : Array.isArray(value) ? value.map((item) => item?.note) : [];
+  return items.filter((item) => typeof item === "string").slice(0, 20).map((item) => item.replace(/<[^>]*>/g, "").trim().slice(0, 2000)).filter(Boolean);
+}
+module.exports = { startUpdater, releaseNotesText };
