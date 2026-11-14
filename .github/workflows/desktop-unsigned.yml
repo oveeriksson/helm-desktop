@@ -1,0 +1,40 @@
+name: Desktop – unsigned preview installers
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Explicit unsigned configuration without an update feed
+        shell: bash
+        run: |
+          node -e "require('fs').writeFileSync('unsigned-config.json',JSON.stringify({extends:'./electron-builder.yml',publish:null,mac:{identity:null,notarize:false,forceCodeSigning:false},win:{forceCodeSigning:false,signAndEditExecutable:false}}))"
+      - name: Build Mac DMG and ZIP
+        if: runner.os == 'macOS'
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: bunx electron-builder --mac --config unsigned-config.json --publish never
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        run: bunx electron-builder --win --config unsigned-config.json --publish never
+      - name: Verify automatic update feed is absent
+        shell: bash
+        run: |
+          if find desktop-release -name app-update.yml -o -name latest.yml -o -name latest-mac.yml | grep -q .; then echo 'Unsigned builds must not contain an update feed'; exit 1; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-${{ runner.os }}
+          if-no-files-found: error
+          path: |
+            desktop-release/*.dmg
+            desktop-release/*.zip
+            desktop-release/*.exe
