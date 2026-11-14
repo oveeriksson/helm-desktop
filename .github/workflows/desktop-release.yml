@@ -1,0 +1,96 @@
+name: Desktop – signed automatic-update release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag matching package.json (for example v1.1.4)
+        required: true
+        type: string
+env:
+  GITHUB_REF_NAME: ${{ inputs.tag || github.ref_name }}
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Require a public release feed
+        env:
+          REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          node -e "if(process.env.REPOSITORY_PRIVATE !== 'false') throw Error('Automatic updates require a public release repository; do not embed a GitHub token in the app.')"
+          node scripts/desktop-release-config.cjs
+      - name: Build signed and notarized Mac
+        if: runner.os == 'macOS'
+        env:
+          CSC_LINK: ${{ secrets.MAC_CERT_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          for name in CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!name}" ]; then echo "Missing signing credential: $name"; exit 1; fi
+          done
+          bunx electron-builder --mac --config desktop-release-config.json --config.mac.forceCodeSigning=true --publish never
+          for app in desktop-release/mac*/Helm.app; do
+            codesign --verify --deep --strict --verbose=2 "$app"
+            xcrun stapler validate "$app"
+            spctl --assess --type execute --verbose "$app"
+          done
+      - name: Build and verify signed Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          WIN_CSC_LINK: ${{ secrets.WIN_CERT_PFX_BASE64 }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CERT_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WIN_CSC_LINK) -or [string]::IsNullOrWhiteSpace($env:WIN_CSC_KEY_PASSWORD)) { throw 'Missing Windows signing credentials.' }
+          bunx electron-builder --win --config desktop-release-config.json --config.win.forceCodeSigning=true --publish never
+          if ($LASTEXITCODE -ne 0) { throw 'Windows packaging failed.' }
+          $app = 'desktop-release/win-unpacked/Helm.exe'
+          $identity = (Get-AuthenticodeSignature $app).SignerCertificate.Thumbprint
+          foreach ($file in @($app) + @((Get-ChildItem 'desktop-release/*.exe').FullName)) {
+            $signature = Get-AuthenticodeSignature $file
+            if ($signature.Status -ne 'Valid' -or $null -eq $signature.TimeStamperCertificate -or $signature.SignerCertificate.Thumbprint -ne $identity) { throw "Signature verification failed: $file" }
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-${{ runner.os }}
+          if-no-files-found: error
+          path: |
+            desktop-release/*.dmg
+            desktop-release/*.zip
+            desktop-release/*.exe
+            desktop-release/*.blockmap
+            desktop-release/latest*.yml
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-files
+          merge-multiple: true
+      - name: Publish only after both platforms pass signing checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          test -f release-files/latest.yml
+          test -f release-files/latest-mac.yml
+          if gh release view "$TAG" >/dev/null 2>&1; then echo 'Release already exists; never replace published signed assets.'; exit 1; fi
+          gh release create "$TAG" --verify-tag --draft --title "Helm $TAG" --generate-notes release-files/*
+          gh release edit "$TAG" --draft=false

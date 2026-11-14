@@ -1,0 +1,67 @@
+appId: app.browstron.helm
+productName: Helm
+copyright: Copyright © Helm
+asar: true
+directories:
+  output: desktop-release
+  buildResources: build
+files:
+  - electron/**/*.cjs
+  - package.json
+extraMetadata:
+  main: electron/main.cjs
+artifactName: Helm-${version}-${os}-${arch}.${ext}
+# Signing is driven by environment variables so no secrets live in the repo:
+#   macOS: CSC_LINK + CSC_KEY_PASSWORD (Developer ID Application .p12),
+#          APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID (notarization)
+#   Windows: WIN_CSC_LINK + WIN_CSC_KEY_PASSWORD (Authenticode .pfx)
+# Release workflows require signing; local packaging does not publish updates.
+mac:
+  icon: build/icon.icns
+  category: public.app-category.productivity
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  notarize: true
+  entitlements: electron/entitlements.mac.plist
+  entitlementsInherit: electron/entitlements.mac.plist
+  extendInfo:
+    NSCameraUsageDescription: Websites may request camera access with your permission.
+    NSMicrophoneUsageDescription: Websites may request microphone access with your permission.
+    NSLocationWhenInUseUsageDescription: Websites may request your location with your permission.
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+dmg:
+  background: build/dmg-background.png
+  icon: build/icon.icns
+  title: Helm ${version}
+  window: { width: 540, height: 380 }
+  iconSize: 96
+  contents:
+    - { x: 140, y: 200, type: file }
+    - { x: 400, y: 200, type: link, path: /Applications }
+win:
+  icon: build/icon.ico
+  signtoolOptions:
+    signingHashAlgorithms: [sha256]
+    rfc3161TimeStampServer: http://timestamp.digicert.com
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+nsis:
+  artifactName: Helm-${version}-win32-${arch}-setup.${ext}
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Helm
+  installerLanguages: [sv_SE, en_US]
+  multiLanguageInstaller: true
+portable:
+  artifactName: Helm-${version}-win32-${arch}-portable.${ext}

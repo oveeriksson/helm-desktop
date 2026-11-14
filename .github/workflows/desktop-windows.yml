@@ -1,0 +1,49 @@
+name: Desktop – Windows signed
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      WIN_CSC_LINK: ${{ secrets.WIN_CERT_PFX_BASE64 }}
+      WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CERT_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require signing certificate
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WIN_CSC_LINK) -or [string]::IsNullOrWhiteSpace($env:WIN_CSC_KEY_PASSWORD)) {
+            throw "Add WIN_CERT_PFX_BASE64 and WIN_CERT_PASSWORD to this repository's Actions secrets. No unsigned fallback is allowed."
+          }
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Build signed installer and portable app
+        run: bun run desktop:win -- --config.win.forceCodeSigning=true --publish never
+      - name: Verify application and installer signatures
+        shell: pwsh
+        run: |
+          $app = Join-Path $PWD 'desktop-release/win-unpacked/Helm.exe'
+          if (!(Test-Path $app)) { throw "Packaged Helm.exe is missing." }
+          $installers = @(Get-ChildItem 'desktop-release/*.exe')
+          if ($installers.Count -lt 2) { throw "Expected an installer and a portable app." }
+          $appSignature = Get-AuthenticodeSignature $app
+          foreach ($file in @($app) + @($installers.FullName)) {
+            $signature = Get-AuthenticodeSignature $file
+            if ($signature.Status -ne 'Valid' -or $null -eq $signature.SignerCertificate -or $null -eq $signature.TimeStamperCertificate) {
+              throw "Invalid or missing timestamped Authenticode signature: $file ($($signature.Status))"
+            }
+            if ($signature.SignerCertificate.Thumbprint -ne $appSignature.SignerCertificate.Thumbprint) {
+              throw "Installer and application signing identities differ."
+            }
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: helm-windows-signed
+          if-no-files-found: error
+          path: |
+            desktop-release/*.exe
+            desktop-release/*.exe.blockmap
