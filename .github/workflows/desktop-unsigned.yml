@@ -38,3 +38,25 @@ jobs:
             desktop-release/*.dmg
             desktop-release/*.zip
             desktop-release/*.exe
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: unsigned-installers
+          merge-multiple: true
+      - name: Publish explicitly unsigned prerelease, never an update feed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v${VERSION}-unsigned"
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --target "$GITHUB_SHA" --prerelease --title "Helm ${VERSION} — unsigned, signing pending" --notes "Unsigned preview installers built from the public Helm desktop repository. Apple signing/notarization and Windows Authenticode signing are pending. Operating-system security warnings or blocks may occur. These files are NOT distributed through automatic updates. Native installation and launch have not been verified on the user's devices. Includes version-specific update notes in the shell; application changes are documented in Helm's version history."
+          fi
+          gh release upload "$TAG" unsigned-installers/* --clobber
